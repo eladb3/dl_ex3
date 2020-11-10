@@ -4,7 +4,10 @@ import torchvision
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from PIL import Image
+import os
 import torchvision.transforms.functional as TF
+from tqdm.notebook import tqdm
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
 debug = False
 
@@ -30,12 +33,12 @@ def get_boxes(Htag, Wtag, k, s):
     res[:, 3] = res[:, 1] + k                 # x2
     return res
 
-def nms(fcn_scores, iou_threshold, k =11, s = 2):
+def nms(fcn_scores, iou_threshold, k =12, s = 2):
     with torch.no_grad():
         N = fcn_scores.size(0)
         H, W = fcn_scores.shape[-2:]
-        boxes = get_boxes(H, W, k = k, s = s)
-        res = torch.ones((N, boxes.size(0), 5)) * -1
+        boxes = get_boxes(H, W, k = k, s = s).to(device)
+        res = torch.ones((N, boxes.size(0), 5)).to(device) * -1
         ls = []
         for i in range(N):
             f = fcn_scores[i, 1, :, :].flatten()
@@ -55,24 +58,30 @@ def gen_elipse(x1, y1, x2, y2):
     if dx > dy: angle *= 2
     major = max(dx , dy) /2
     minor = min(dx, dy) /2
-    return f'{major} {minor} {angle} {x_center} {y_center}'
+    return f'{major:.2f} {minor:.2f} {angle:.2f} {x_center:.2f} {y_center:.2f}'
 
-def gen_fddb_out(model):
+def gen_fddb_out(model, name = None):
     base = "./data/EX2_data/fddb/images/"
-    f_read = open("data/EX2_data/fddb/FDDB-folds/FDDB-fold-01.txt", 'rt')
-    f_write = open("fddb-test/fold-01-out.txt", 'wt')
-    while True:
-        l = f_read.readline().rstrip('\n')
-        s = "\n" + l + "\n"
+    with open("data/EX2_data/fddb/FDDB-folds/FDDB-fold-01.txt", 'rt') as f:
+        lines = f.readlines()
+    p = f"fddb-test/fold-01-out.txt"
+    if name is not None:
+        p = f"fddb-test/{name}/fold-01-out.txt"
+        if not os.path.isdir(f"fddb-test/{name}"):
+               os.mkdir(f"fddb-test/{name}")
+    f_write = open(p, 'wt')
+    for l in tqdm(lines):
+        l = l.rstrip('\n')
         if len(l) == 0: break
         out = model(f'{base}{l}.jpg')
-        s += f"{int(out.size(0))}\n" 
+        s = ""
+        count = 0
         for i in range(int(out.size(0))):
-            x1, y1, x2, y2 ,s = out[i, :]
-            s += f'{gen_elipse(x1, y1, x2, y2)} {s}\n'
-        f_write.write(s.rstrip("\n"))
-        break
-    f_read.close() ; f_write.close()
+            x1, y1, x2, y2 ,score = out[i, :]
+            count += 1
+            s += f'{gen_elipse(x1, y1, x2, y2)} {score:.2f}\n'
+        f_write.write(f"{l}\n{count}\n{s}")
+    f_write.close()
     return
             
             

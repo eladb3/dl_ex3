@@ -56,7 +56,7 @@ class  MyData:
             self.aflw = torch.load(aflw_path)
         else:
             self.aflw = {12: lua2torch("data/EX2_data/aflw/aflw_12.t7"),
-                        24: lua2torch("data/EX2_data/aflw/aflw_12.t7")}
+                        24: lua2torch("data/EX2_data/aflw/aflw_24.t7")}
             torch.save(self.aflw, aflw_path)
         
         noface_path = "cache/utils.data.MyData.noface"
