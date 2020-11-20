@@ -31,10 +31,11 @@ def get_resized_crops(x, boxes, size):
     boxes : (N, 5) # last if score
     """
     N = boxes.size(0)
-    res = torch.zeros((N, size, size), dtype = torch.uint32)
+    res = torch.zeros((N, 3, size, size), dtype = torch.float32)
     for i in range(N):
         x1, y1, x2, y2 = map(int, boxes[i, :4])
-        res[i, :, :] = TF.resize(x[:, y1:y2, x1:x2], size = (size, size)) 
+        res[i,:, :, :] = TF.resize(x[:, y1:y2, x1:x2], size = (size, size)) 
+    return res
 
 def scale_model_nms_pipeline(x, scales, fcn_model, iou_threshold = 0.505):
     boxes, scores = [], []
@@ -213,7 +214,6 @@ def plot_with_rec(x, locs, scale = 1, fill = False, n_max = float('Inf'), limit 
     for i in range(min(n_max, locs.size(0))):
         x1, y1, x2, y2, s = locs[i, :]
         if s < limit: continue
-        print(i)
         assert x2 > x1 and y2 > y1, print(f'index {i}')
         if scale != 1:
             x1, y1, x2, y2 = map(lambda i: int(i/scale), (x1, y1, x2, y2))
@@ -227,18 +227,19 @@ def train_12Net(Net12, Epochs, save = False):
     train_Net(Net12, Epochs, mData12, model12_path if save else None)
 
 def train_24Net(Net24, Epochs, save = False):
-    train_Net(Net24, Epochs, mData24, model24_path if save else None)
+    train_Net(Net24, Epochs, mData24, model24_path if save else None, add_softmax = True, print_each = 100)
 
-def train_Net(Net, Epochs, mData, path = None):
+def train_Net(Net, Epochs, mData, path = None, add_softmax = False, print_each = 100):
     Net.to(device)
     opt = optim.Adam(Net.parameters(), lr=  1e-4)
     loss_fn = nn.CrossEntropyLoss()
     E = Epochs
     l_loss, l_acc = {'train':[], 'test':[]}, {'train':[], 'test':[]}
     best_model, best_acc = None ,0
+    dl = mData.DataLoader(typ = 'train', batch_size = 256)
+    dl_test = mData.DataLoader(typ = 'test', batch_size = 256)
+    n_train, n_test = len(dl.dataset), len(dl_test.dataset)
     for epoch in range(E):
-        dl = mData.DataLoader(typ = 'train', batch_size = 256)
-        dl_test = mData.DataLoader(typ = 'test', batch_size = 256)
         epoch_loss, epoch_acc = 0, 0
         # train epoch
         for x, y in dl:
@@ -247,10 +248,12 @@ def train_Net(Net, Epochs, mData, path = None):
             loss = loss_fn(y_pred, y)
             opt.zero_grad() ; loss.backward() ; opt.step()
             with torch.no_grad():
-                epoch_acc += (y_pred.cpu().argmax(axis=1) == y.cpu()).type(torch.float32).mean()
-            epoch_loss += loss 
-        l_loss['train'].append(epoch_loss / len(dl))
-        l_acc['train'].append(epoch_acc / len(dl))
+                c_acc = (y_pred.cpu().argmax(axis=1) == y.cpu()).type(torch.float32).sum()
+                epoch_acc += c_acc
+            epoch_loss += loss * len(x) 
+#             print(list(map(float, (loss, c_acc, sum(y == 1), sum(y == 0)))))
+        l_loss['train'].append(epoch_loss / n_train)
+        l_acc['train'].append(epoch_acc / n_train)
         epoch_loss, epoch_acc = 0, 0
         # test
         for x,y in dl_test:
@@ -258,18 +261,19 @@ def train_Net(Net, Epochs, mData, path = None):
             with torch.no_grad():
                 y_pred = Net(x)
                 loss = loss_fn(y_pred, y)
-                epoch_acc += (y_pred.cpu().argmax(axis=1) == y.cpu()).type(torch.float32).mean()
-            epoch_loss += loss 
+                epoch_acc += (y_pred.cpu().argmax(axis=1) == y.cpu()).type(torch.float32).sum()
+            epoch_loss += loss * len(x)
         # update best model
-        l_loss['test'].append(epoch_loss / len(dl_test))
-        l_acc['test'].append(epoch_acc / len(dl_test))
+        l_loss['test'].append(epoch_loss / n_test)
+        l_acc['test'].append(epoch_acc / n_test)
         if l_acc['test'][-1] > best_acc:
             best_acc = l_acc['test'][-1]
             best_model = deepcopy(Net)
-        if epoch % 100 == 0: 
+        if epoch % print_each == 0: 
             print_during_train(epoch,l_loss, l_acc)
     print_during_train(E-1,l_loss, l_acc)
     if path is not None:
+        if add_softmax: best_model = nn.Sequential(best_model, nn.Softmax(dim = 1))
         torch.save(best_model.cpu(), path)
         print(f">>> model saved to {path}")
     plt_loss_acc(l_loss, l_acc)
