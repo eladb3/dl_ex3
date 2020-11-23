@@ -9,7 +9,8 @@ import torchvision.transforms.functional as TF
 from tqdm.notebook import tqdm
 from utils_lib.data import mData12, mData24
 from copy import deepcopy
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+from utils_lib.consts import device, EX2_data_path
+import random
 
 debug = False
 
@@ -37,7 +38,7 @@ def get_resized_crops(x, boxes, size):
         res[i,:, :, :] = TF.resize(x[:, y1:y2, x1:x2], size = (size, size)) 
     return res
 
-def scale_model_nms_pipeline(x, scales, fcn_model, iou_threshold = 0.505):
+def scale_model_nms_pipeline(x, scales, fcn_model, iou_threshold):
     boxes, scores = [], []
     if not isinstance(scales, (list, tuple)):
         scales = [scales]
@@ -61,6 +62,15 @@ def scale_model_nms_pipeline(x, scales, fcn_model, iou_threshold = 0.505):
         res[:keep.size(0),  4] = scores[keep]
     return res[ :keep.size(0), :]
 
+def get_random_fddb_img():
+    base = f"{EX2_data_path}/fddb/images"
+    path = base
+    while len([p for p in os.listdir(path) if p.endswith("jpg")]) == 0:
+        dirs = [d for d in os.listdir(path) if d[0] != '.' and os.path.isdir(f"{path}/{d}")]
+        path = f"{path}/{dirs[random.randint(0, len(dirs)-1)]}"
+    imgs = [p for p in os.listdir(path) if p.endswith("jpg")]
+    return f"{path}/{imgs[random.randint(0, len(imgs)-1)]}"
+        
 #### Prints
 
 def print_during_train(epoch, loss, acc):
@@ -128,14 +138,14 @@ def gen_ellipse(x1, y1, x2, y2):
     return f'{major:.2f} {minor:.2f} {angle:.2f} {x_center:.2f} {y_center:.2f}'
 
 def gen_fddb_out(model, ellipse = True, name = None):
-    base = "./data/EX2_data/fddb/images/"
-    with open("data/EX2_data/fddb/FDDB-folds/FDDB-fold-01.txt", 'rt') as f:
+    base = f"{EX2_data_path}/fddb/images/"
+    with open(f"{EX2_data_path}/fddb/FDDB-folds/FDDB-fold-01.txt", 'rt') as f:
         lines = f.readlines()
-    p = f"fddb-test/fold-01-out.txt"
+    p = f"./fddb-test/fold-01-out.txt"
     if name is not None:
-        p = f"fddb-test/{name}/fold-01-out.txt"
-        if not os.path.isdir(f"fddb-test/{name}"):
-               os.makedirs(f"fddb-test/{name}")
+        p = f"./fddb-test/{name}/fold-01-out.txt"
+        if not os.path.isdir(f"./fddb-test/{name}"):
+               os.makedirs(f"./fddb-test/{name}")
     f_write = open(p, 'wt')
     for l in lines:
         l = l.rstrip('\n')
@@ -226,19 +236,20 @@ def plot_with_rec(x, locs, scale = 1, fill = False, n_max = float('Inf'), limit 
 def train_12Net(Net12, Epochs, save = False):
     train_Net(Net12, Epochs, mData12, model12_path if save else None)
 
-def train_24Net(Net24, Epochs, save = False):
-    train_Net(Net24, Epochs, mData24, model24_path if save else None, add_softmax = True, print_each = 100)
+def train_24Net(Net24, Epochs, save = False, batch_size = 128):
+    train_Net(Net24, Epochs, mData24, model24_path if save else None, add_softmax = True, print_each = 10, batch_size = 128)
 
-def train_Net(Net, Epochs, mData, path = None, add_softmax = False, print_each = 100):
+def train_Net(Net, Epochs, mData, path = None, add_softmax = False, print_each = 100, batch_size = 256, early_stop = 10):
     Net.to(device)
     opt = optim.Adam(Net.parameters(), lr=  1e-4)
     loss_fn = nn.CrossEntropyLoss()
     E = Epochs
     l_loss, l_acc = {'train':[], 'test':[]}, {'train':[], 'test':[]}
     best_model, best_acc = None ,0
-    dl = mData.DataLoader(typ = 'train', batch_size = 256)
+    dl = mData.DataLoader(typ = 'train', batch_size = batch_size)
     dl_test = mData.DataLoader(typ = 'test', batch_size = 256)
     n_train, n_test = len(dl.dataset), len(dl_test.dataset)
+    early_stop_state = 0
     for epoch in range(E):
         epoch_loss, epoch_acc = 0, 0
         # train epoch
@@ -268,10 +279,17 @@ def train_Net(Net, Epochs, mData, path = None, add_softmax = False, print_each =
         l_acc['test'].append(epoch_acc / n_test)
         if l_acc['test'][-1] > best_acc:
             best_acc = l_acc['test'][-1]
+            best_model_train_acc = l_acc['train'][-1]
             best_model = deepcopy(Net)
+            early_stop_state = 0
+        else: 
+            early_stop_state += 1
+        if early_stop_state > early_stop:
+            print(f"Test accuracy has not improved in {early_stop_state} epochs, stop train")
+            break
         if epoch % print_each == 0: 
             print_during_train(epoch,l_loss, l_acc)
-    print_during_train(E-1,l_loss, l_acc)
+    print(f"Best model test accuracy: {best_acc}, train accuracy: {best_model_train_acc}")
     if path is not None:
         if add_softmax: best_model = nn.Sequential(best_model, nn.Softmax(dim = 1))
         torch.save(best_model.cpu(), path)

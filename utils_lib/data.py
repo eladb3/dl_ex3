@@ -10,8 +10,7 @@ import matplotlib.pyplot as plt
 import os
 import torchvision.transforms.functional as TF
 import random
-
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+from utils_lib.consts import device, VOC_data_path, EX2_data_path
 
 def lua2torch(path):
     f= torchfile.load(path)
@@ -27,7 +26,7 @@ def crop(x, c):
     x1, y1, x2, y2 = map(int, tuple(c[:4].numpy()))
     return x[:, y1:y2, x1:x2]
 
-def mining(model, data, min_score = 0.99, max_per = 3):
+def mining(model, data, min_score = 0.99, max_per = 5):
     """
     model: 12Net
     data: tensor of size (3, H, W)
@@ -42,10 +41,10 @@ def mining(model, data, min_score = 0.99, max_per = 3):
     return res
 
 def get_VOC(transform):
-    download = not os.path.isdir("data/VOC")
+    download = not os.path.isdir(VOC_data_path)
     datas = []
     for t in ['train', 'trainval', 'val']:
-        d = torchvision.datasets.VOCDetection(root = 'data/VOC',
+        d = torchvision.datasets.VOCDetection(root = VOC_data_path,
                                              image_set = 'train',
                                              transform = transform,
                                              download = download)
@@ -74,7 +73,7 @@ def gen_noface_data(n, size):
         res.extend(gen_noface_data_internal(size, n - len(res)))
     return res[:n]
 
-def gen_noface24_data(detector_model, step = 500):
+def gen_noface24_data(detector_model, step = 500, continue_ = False):
     transform = transforms.Compose([
         transforms.ToTensor(),
     ])
@@ -86,11 +85,17 @@ def gen_noface24_data(detector_model, step = 500):
     if not os.path.isdir("cache/tmp"): os.mkdir("cache/tmp")
     base = f"cache/tmp/utils.data.MyData24.noface.parts"
     n = 0
-    for s in range(parts):
+    
+    start = 0
+    if continue_:
+        for start in range(parts):
+            if not os.path.isfile(f"{base}.{start}"): break
+    
+    for s in range(start, parts):
         res = []
         for i in range(s * step, min((s+1) * step, len(data))):
             H, W = data[i][0].shape[-2:]
-            if has_person(data[i][1]) or H < 6 or W < 6: continue
+            if has_person(data[i][1]) or H < 24 or W < 24: continue
             o = mining(detector_model, data[i][0])
             res.extend(zip(o, [torch.tensor(0, dtype = torch.int64)] * len(o))) 
         torch.save(res, f"{base}.{s}")
@@ -119,7 +124,7 @@ class  MyData12:
         print("Prepare 12Net data")
         self.aflw_path = "cache/utils.data.MyData12.aflw"                  
         if not cache or not os.path.isfile(self.aflw_path):
-            aflw = lua2torch("data/EX2_data/aflw/aflw_12.t7")
+            aflw = lua2torch(f"{EX2_data_path}/aflw/aflw_12.t7")
             torch.save(aflw, self.aflw_path)
         
         self.noface_path = "cache/utils.data.MyData12.noface"
@@ -152,19 +157,19 @@ class  MyData12:
 
 class  MyData24:
     
-    def init(self, detector_model, cache = True, neg_mining = True):
+    def init(self, detector_model, cache = True, neg_mining = True, continue_ = False):
         print("Prepare 24Net data...")
         base = "cache/utils.data.MyData24"
         self.aflw_path = f"{base}.aflw"                  
         if not cache or not os.path.isfile(self.aflw_path):
-            aflw = lua2torch("data/EX2_data/aflw/aflw_24.t7")
+            aflw = lua2torch(f"{EX2_data_path}/aflw/aflw_24.t7")
             torch.save(aflw, self.aflw_path)
         
         n = len(self.aflw())
         if neg_mining:
             self.noface_path = f"{base}.noface"
             if not cache or not os.path.isfile(self.noface_path):
-                noface = gen_noface24_data(detector_model)
+                noface = gen_noface24_data(detector_model, continue_ = continue_)
                 random.shuffle(noface)
                 if len(noface) > n: noface = noface[:n]
                 torch.save(noface, self.noface_path)
