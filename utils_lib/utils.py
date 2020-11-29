@@ -11,6 +11,7 @@ from utils_lib.data import mData12, mData24
 from copy import deepcopy
 from utils_lib.consts import device, EX2_data_path
 import random
+import gdown
 
 debug = False
 
@@ -70,7 +71,15 @@ def get_random_fddb_img():
         path = f"{path}/{dirs[random.randint(0, len(dirs)-1)]}"
     imgs = [p for p in os.listdir(path) if p.endswith("jpg")]
     return f"{path}/{imgs[random.randint(0, len(imgs)-1)]}"
-        
+
+def get_EX2_data():
+    url = 'https://drive.google.com/u/0/uc?id=1_36ltHui4gcODBpSxgt-iPgSk7q-E2Gn'
+    if not os.path.isfile("./data/EX2_data.zip"):
+        output = f'{EX2_data_path}.zip'
+        gdown.download(url, output, quiet=False)
+    if not os.path.isdir(EX2_data_path):
+        os.system(f"unzip {EX2_data_path}.zip -d ./data")
+
 #### Prints
 
 def print_during_train(epoch, loss, acc):
