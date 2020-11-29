@@ -79,7 +79,12 @@ def get_EX2_data():
         gdown.download(url, output, quiet=False)
     if not os.path.isdir(EX2_data_path):
         os.system(f"unzip {EX2_data_path}.zip -d ./data")
-
+        # fix arguments
+        with open(f"{EX2_data_path}/fddb/evaluation/runEvaluate.pl", 'rt') as f:
+            s = f.read().replace("/home/wolf/adampolyak", EX2_data_path).replace("my $detFormat = 1;", "my $detFormat = 0;")
+        with open(f"{EX2_data_path}/fddb/evaluation/runEvaluate.pl", 'wt') as f:
+            f.write(s)
+        
 #### Prints
 
 def print_during_train(epoch, loss, acc):
